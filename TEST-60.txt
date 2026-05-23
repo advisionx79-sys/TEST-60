@@ -1,0 +1,105 @@
+xSensorFault := (dDiffPressure > INT#500)
+    OR (dTDS > DINT#50000)
+    OR (dHumidity > INT#100)
+    OR (dWaterTemp > INT#80);
+
+mAlarmSensor := xSensorFault;
+
+
+xRemotePermit := mRemoteMode AND mRemoteAuthOK AND mRemoteAlive;
+
+mAlarmRemote := mRemoteMode AND NOT xRemotePermit;
+
+
+xDPHigh := dDiffPressure >= INT#150;
+
+tDPConfirm(IN:=xDPHigh, PT:=T#2S, Q=>xDPDone, ET=>tDPElapsed);
+
+
+xResetPermit := mAlarmReset AND NOT xEStop AND (dDiffPressure <= INT#140);
+
+
+xDpTripLatched := (xDpTripLatched OR xDPDone) AND NOT xResetPermit;
+
+mAlarmDpTrip := xDpTripLatched;
+
+
+xRunCmd := (xRunCmd OR (xStartBtn AND NOT xEStop AND NOT xDpTripLatched))
+    AND NOT xStopBtn
+    AND NOT xEStop
+    AND NOT xDpTripLatched;
+
+
+xAutoDrainReq := (xAutoDrainReq OR (dTDS >= DINT#4000))
+    AND NOT (dTDS <= DINT#3500);
+
+
+xAutoPumpReq := (xAutoPumpReq OR (dHumidity <= INT#70))
+    AND NOT (dHumidity >= INT#80);
+
+
+xAutoHeatReq := (xAutoHeatReq OR (dWaterTemp <= INT#5))
+    AND NOT (dWaterTemp >= INT#8);
+
+
+xSystemOK := xRunCmd
+    AND NOT xEStop
+    AND NOT xDpTripLatched
+    AND NOT xSensorFault;
+
+
+xPumpReqFinal := (xRemotePermit AND mRemotePumpCmd)
+    OR ((NOT xRemotePermit) AND mAutoMode AND xAutoPumpReq);
+
+
+xDrainReqFinal := (xRemotePermit AND mRemoteDrainCmd)
+    OR ((NOT xRemotePermit) AND mAutoMode AND xAutoDrainReq);
+
+
+xDrainValveRaw := xSystemOK
+    AND NOT xDrainLock
+    AND xDrainReqFinal;
+
+
+tDrainLimit(IN:=xDrainValveRaw, PT:=T#120S, Q=>xDrainDone, ET=>tDrainElapsed);
+
+
+xDrainLock := (xDrainLock OR xDrainDone) AND NOT xResetPermit;
+
+mAlarmDrainTO := xDrainLock;
+
+
+tBlower1Run(IN:=xSystemOK AND NOT xBlowerSelect, PT:=T#7200S, Q=>xBlower1TimeUp, ET=>tBlower1Elapsed);
+
+tBlower2Run(IN:=xSystemOK AND xBlowerSelect, PT:=T#7200S, Q=>xBlower2TimeUp, ET=>tBlower2Elapsed);
+
+
+IF xBlower1TimeUp THEN
+    xBlowerSelect := TRUE;
+END_IF;
+
+IF xBlower2TimeUp THEN
+    xBlowerSelect := FALSE;
+END_IF;
+
+yBlower1 := xSystemOK AND NOT xBlowerSelect;
+
+yBlower2 := xSystemOK AND xBlowerSelect;
+
+yHeater := xSystemOK AND xAutoHeatReq;
+
+yPump := xSystemOK AND xPumpReqFinal;
+
+yDrainValve := xSystemOK
+    AND NOT xDrainLock
+    AND xDrainReqFinal;
+
+yMakeupValve := xSystemOK
+    AND NOT xDrainLock
+    AND xDrainReqFinal;
+
+yAlarmOut := xEStop
+    OR mAlarmDpTrip
+    OR mAlarmDrainTO
+    OR mAlarmSensor
+    OR mAlarmRemote;
